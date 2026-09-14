@@ -790,7 +790,7 @@ function ExerciseScreen({ onBack }) {
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 5.2" value={runKm} onChange={(e) => setRunKm(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Pace (นาที/กม.)</label><input type="text" placeholder="เช่น 6:30" value={runPace} onChange={(e) => setRunPace(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
               <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 152" value={runHr} onChange={(e) => setRunHr(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={runKcal} onChange={(e) => setRunKcal(e.target.value)} style={S.input} /></div>
             </div>
@@ -809,7 +809,7 @@ function ExerciseScreen({ onBack }) {
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 30" value={cycleKm} onChange={(e) => setCycleKm(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Watt</label><input type="number" placeholder="เช่น 180" value={cycleWatt} onChange={(e) => setCycleWatt(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
               <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={cycleKcal} onChange={(e) => setCycleKcal(e.target.value)} style={S.input} /></div>
             </div>
