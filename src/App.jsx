@@ -1196,7 +1196,7 @@ function GoalCardItem({ goal, onClick }) {
       onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
       onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "auto" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "auto", width: "100%" }}>
         <div>
           <span style={{ color: goal.accentColor, fontSize: "11px", fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase" }}>{goal.tag}</span>
           <h2 style={{ fontFamily: FONT, fontWeight: 700, fontSize: "20px", marginTop: "2px", lineHeight: 1.1, letterSpacing: "-0.01em" }}>{goal.label}</h2>
@@ -1208,7 +1208,7 @@ function GoalCardItem({ goal, onClick }) {
         <div style={{ height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", marginBottom: "8px" }}>
           <div style={{ height: "100%", width: `${goal.progress}%`, borderRadius: "2px", background: goal.accentColor }} />
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", width: "100%" }}>
           <span style={{ opacity: 0.5, fontSize: "11px" }}>{goal.current} of {goal.target}</span>
           <span style={{ color: goal.accentColor, fontSize: "14px", fontWeight: 700 }}>{goal.progress}%</span>
         </div>
