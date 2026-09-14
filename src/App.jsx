@@ -1204,7 +1204,7 @@ function GoalCardItem({ goal, onClick }) {
         </div>
         <div style={{ color: goal.accentColor, opacity: 0.9, flexShrink: 0 }}>{goal.icon}</div>
       </div>
-      <div style={{ marginTop: "20px" }}>
+      <div style={{ marginTop: "20px", width: "100%" }}>
         <div style={{ height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", marginBottom: "8px" }}>
           <div style={{ height: "100%", width: `${goal.progress}%`, borderRadius: "2px", background: goal.accentColor }} />
         </div>
