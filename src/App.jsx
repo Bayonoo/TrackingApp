@@ -1280,7 +1280,7 @@ function HomeScreen({ onNavigate }) {
       </div>
       <div style={{ padding: "16px 24px", display: "flex", gap: "8px" }}>
         {[{ label: "Active", value: String(goals.length) }, { label: "Avg. Progress", value: `${avgProgress}%` }, { label: "This Month", value: `${avgProgress}%` }].map((s) => (
-          <div key={s.label} style={{ flex: 1, background: "rgba(255,255,255,0.05)", backdropFilter: "blur(14px)", borderRadius: "12px", padding: "10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div key={s.label} style={{ flex: 1, minWidth: 0, background: "rgba(255,255,255,0.05)", backdropFilter: "blur(14px)", borderRadius: "12px", padding: "10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
             <div style={{ fontSize: "16px", fontWeight: 700 }}>{s.value}</div>
             <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "2px", letterSpacing: "0.06em", textTransform: "uppercase" }}>{s.label}</div>
           </div>
