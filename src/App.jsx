@@ -813,6 +813,8 @@ function ExerciseScreen({ onBack }) {
               <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={cycleKcal} onChange={(e) => setCycleKcal(e.target.value)} style={S.input} /></div>
             </div>
+            <SubmitButton label="บันทึก" accent={accent} onClick={handleSave} />
+          </div>
         )}
 
         {/* Weights */}
