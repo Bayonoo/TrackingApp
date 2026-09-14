@@ -1,6 +1,11 @@
 *, *::before, *::after {
   box-sizing: border-box;
 }
+
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+}
 :root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -58,16 +63,10 @@ body {
   overflow-x: hidden;
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+root {
   min-height: 100svh;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
 }
 
 h1,
