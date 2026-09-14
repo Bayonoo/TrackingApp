@@ -117,36 +117,69 @@ function weekKey(isoDateString) {
 }
 
 // ─── Swipe-to-back gesture ──────────────────────────────────────────────────
-// Mimics iOS's native edge-swipe: starting a rightward drag near the left
-// edge of the screen navigates back, same as tapping the Back button.
+// Mimics iOS's native edge-swipe: starting a drag near the left edge and
+// pulling right drags the screen along with the finger in real time (like
+// iOS), then either finishes the navigation (dragged far/fast enough) or
+// snaps back to place — instead of an instant cut.
 const SWIPE_EDGE_ZONE = 24; // px from the left edge that can start the gesture
-const SWIPE_THRESHOLD = 60; // px of rightward movement needed to trigger back
 const SWIPE_MAX_VERTICAL = 60; // px of vertical drift allowed before it's treated as a scroll, not a swipe
+const SWIPE_COMMIT_RATIO = 0.3; // drag past this fraction of screen width to commit the back-navigation
 
 function useSwipeBack(onBack) {
+  const [dragX, setDragX] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const startRef = useRef(null);
+  const cancelledRef = useRef(false);
 
   function onTouchStart(e) {
     const t = e.touches[0];
-    startRef.current = t.clientX <= SWIPE_EDGE_ZONE ? { x: t.clientX, y: t.clientY } : null;
+    if (t.clientX <= SWIPE_EDGE_ZONE) {
+      startRef.current = { x: t.clientX, y: t.clientY };
+      cancelledRef.current = false;
+    } else {
+      startRef.current = null;
+    }
   }
 
   function onTouchMove(e) {
-    if (!startRef.current) return;
+    if (!startRef.current || cancelledRef.current) return;
     const t = e.touches[0];
     const dx = t.clientX - startRef.current.x;
     const dy = Math.abs(t.clientY - startRef.current.y);
-    if (dx > SWIPE_THRESHOLD && dy < SWIPE_MAX_VERTICAL) {
-      startRef.current = null;
-      onBack();
+    if (dy > SWIPE_MAX_VERTICAL && dy > dx) {
+      // Looks more like a vertical scroll than a back-swipe — bail out.
+      cancelledRef.current = true;
+      setDragging(false);
+      setDragX(0);
+      return;
+    }
+    if (dx > 0) {
+      setDragging(true);
+      setDragX(dx);
     }
   }
 
   function onTouchEnd() {
+    if (!startRef.current || cancelledRef.current) {
+      startRef.current = null;
+      return;
+    }
     startRef.current = null;
+    const width = typeof window !== "undefined" ? window.innerWidth : 400;
+    setDragging(false);
+    if (dragX > width * SWIPE_COMMIT_RATIO) {
+      setDragX(width); // finish the slide-out
+      setTimeout(onBack, 220);
+    } else {
+      setDragX(0); // didn't drag far enough — snap back into place
+    }
   }
 
-  return { onTouchStart, onTouchMove, onTouchEnd };
+  return {
+    handlers: { onTouchStart, onTouchMove, onTouchEnd },
+    dragX,
+    dragging,
+  };
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -448,10 +481,12 @@ function MoneyScreen({ onBack }) {
   }
 
   const confirmEntry = entries.find((e) => e.id === confirmId);
-  const swipeHandlers = useSwipeBack(onBack);
+  const { handlers: swipeHandlers, dragX, dragging } = useSwipeBack(onBack);
 
   return (
-    <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px" }}>
+    <>
+      {dragX > 0 && <div style={{ position: "fixed", inset: 0, background: HOME_BG, zIndex: 0 }} />}
+      <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px", position: "relative", zIndex: 1, transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 0.25s ease", boxShadow: dragX > 0 ? "-10px 0 30px rgba(0,0,0,0.4)" : "none" }}>
       {toast && <Toast message={toast} accent={accent} />}
       {showMonthPicker && <MonthPickerSheet accent={accent} selected={{ month: selectedMonth, year: selectedYear }} onSelect={(m, y) => { setSelectedMonth(m); setSelectedYear(y); }} onClose={() => setShowMonthPicker(false)} />}
       {confirmEntry && (
@@ -520,7 +555,8 @@ function MoneyScreen({ onBack }) {
           ))}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -597,10 +633,12 @@ function InvestmentScreen({ onBack }) {
   }
 
   const confirmEntry = entries.find((e) => e.id === confirmId);
-  const swipeHandlers = useSwipeBack(onBack);
+  const { handlers: swipeHandlers, dragX, dragging } = useSwipeBack(onBack);
 
   return (
-    <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px" }}>
+    <>
+      {dragX > 0 && <div style={{ position: "fixed", inset: 0, background: HOME_BG, zIndex: 0 }} />}
+      <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px", position: "relative", zIndex: 1, transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 0.25s ease", boxShadow: dragX > 0 ? "-10px 0 30px rgba(0,0,0,0.4)" : "none" }}>
       {toast && <Toast message={toast} accent={accent} />}
       {showAddAsset && <AddAssetSheet accent={accent} onAdd={(a) => { setAssets((p) => [...p, a]); setSelectedAsset(a); }} onClose={() => setShowAddAsset(false)} />}
       {confirmEntry && (
@@ -714,7 +752,8 @@ function InvestmentScreen({ onBack }) {
           })}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -776,7 +815,7 @@ function ExerciseScreen({ onBack }) {
   }
 
   const confirmSession = sessions.find((s) => s.id === confirmId);
-  const swipeHandlers = useSwipeBack(onBack);
+  const { handlers: swipeHandlers, dragX, dragging } = useSwipeBack(onBack);
 
   const workoutTabs = [
     { key: "run", label: "วิ่ง", emoji: "🏃" },
@@ -787,7 +826,9 @@ function ExerciseScreen({ onBack }) {
   const typeColor = { run: accent, cycle: "#818CF8", weights: "#34D399", rest: "rgba(255,255,255,0.2)" };
 
   return (
-    <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px" }}>
+    <>
+      {dragX > 0 && <div style={{ position: "fixed", inset: 0, background: HOME_BG, zIndex: 0 }} />}
+      <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px", position: "relative", zIndex: 1, transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 0.25s ease", boxShadow: dragX > 0 ? "-10px 0 30px rgba(0,0,0,0.4)" : "none" }}>
       {toast && <Toast message={toast} accent={accent} />}
       {showKcalSheet && <KcalGoalSheet accent={accent} current={kcalGoal} onSave={setKcalGoal} onClose={() => setShowKcalSheet(false)} />}
       {confirmSession && (
@@ -954,7 +995,8 @@ function ExerciseScreen({ onBack }) {
           })}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -1058,10 +1100,12 @@ function StatsScreen({ onBack }) {
   ];
 
   const accent = tabs.find((t) => t.key === tab).accent;
-  const swipeHandlers = useSwipeBack(onBack);
+  const { handlers: swipeHandlers, dragX, dragging } = useSwipeBack(onBack);
 
   return (
-    <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px" }}>
+    <>
+      {dragX > 0 && <div style={{ position: "fixed", inset: 0, background: HOME_BG, zIndex: 0 }} />}
+      <div {...swipeHandlers} style={{ minHeight: "100%", background: bgGradient(accent), color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", paddingBottom: "40px", position: "relative", zIndex: 1, transform: `translateX(${dragX}px)`, transition: dragging ? "none" : "transform 0.25s ease", boxShadow: dragX > 0 ? "-10px 0 30px rgba(0,0,0,0.4)" : "none" }}>
       <StatusBar />
       <NavBar title="Stats" accent={accent} onBack={onBack} />
 
@@ -1258,7 +1302,8 @@ function StatsScreen({ onBack }) {
           )
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
