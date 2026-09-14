@@ -1,5 +1,17 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useContext, createContext } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { auth, db } from "./firebase";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+
+// ─── Auth context ───────────────────────────────────────────────────────────
+// Gives usePersistedState access to the current user's uid so it knows
+// which Firestore path to read/write, without threading a prop through
+// every screen component.
+const AuthContext = createContext(null);
+function useAuth() {
+  return useContext(AuthContext);
+}
 
 // ─── Font & Theme ─────────────────────────────────────────────────────────────
 
@@ -37,6 +49,72 @@ const INVEST_TYPES = [
 ];
 
 const MUSCLE_GROUPS = ["อก", "หลัง", "ไหล่", "แขน", "ขา", "แกน"];
+
+// ─── Persistence ──────────────────────────────────────────────────────────────
+// Saves state to the browser's localStorage AND to Firestore (under
+// users/{uid}/appState/{key}) so data survives navigating away (Back),
+// closing the tab, reloading the page, reinstalling the PWA, or Safari
+// clearing site data after inactivity. localStorage still gives an
+// instant first paint; Firestore is the durable copy.
+
+function usePersistedState(key, initialValue) {
+  const { uid } = useAuth() || {};
+  const [state, setState] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(key);
+      return stored !== null ? JSON.parse(stored) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  // Live-subscribe to the cloud copy once we know who's signed in, so
+  // every screen using the same key stays in sync and a fresh device
+  // picks up existing data.
+  useEffect(() => {
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "appState", key);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) setState(snap.data().value);
+      },
+      (err) => console.error(`Firestore read failed for "${key}":`, err)
+    );
+    return () => unsub();
+  }, [uid, key]);
+
+  // Persist every change locally (instant) and to Firestore (durable).
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(state));
+    } catch {
+      // storage unavailable (private mode / quota) — fail silently
+    }
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "appState", key);
+    setDoc(ref, { value: state, updatedAt: Date.now() }).catch((err) =>
+      console.error(`Firestore write failed for "${key}":`, err)
+    );
+  }, [key, state, uid]);
+
+  return [state, setState];
+}
+
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ISO-week key like "2026-W07", used to bucket exercise sessions by week.
+function weekKey(isoDateString) {
+  const d = new Date(isoDateString);
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayNum = (target.getDay() + 6) % 7; // Mon=0..Sun=6
+  target.setDate(target.getDate() - dayNum + 3);
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const week = 1 + Math.round(((target - firstThursday) / 86400000 - 3 + ((firstThursday.getDay() + 6) % 7)) / 7);
+  return `${target.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -149,24 +227,10 @@ function Toast({ message, accent }) {
 }
 
 function StatusBar() {
-  return (
-    <div style={{ height: "44px", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", fontSize: "12px", fontWeight: 600, color: "rgba(255,255,255,0.7)", flexShrink: 0 }}>
-      <span>9:41</span>
-      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-        <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
-          <rect x="0" y="8" width="3" height="4" rx="0.5" fill="currentColor" opacity="0.4" />
-          <rect x="4.5" y="5" width="3" height="7" rx="0.5" fill="currentColor" opacity="0.6" />
-          <rect x="9" y="2" width="3" height="10" rx="0.5" fill="currentColor" opacity="0.8" />
-          <rect x="13.5" y="0" width="2.5" height="12" rx="0.5" fill="currentColor" />
-        </svg>
-        <svg width="25" height="12" viewBox="0 0 25 12" fill="none">
-          <rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" strokeOpacity="0.35" />
-          <rect x="2" y="2" width="15" height="8" rx="2" fill="currentColor" />
-          <path d="M23 4.5V7.5C23.8 7.2 24.5 6.7 24.5 6C24.5 5.3 23.8 4.8 23 4.5Z" fill="currentColor" fillOpacity="0.4" />
-        </svg>
-      </div>
-    </div>
-  );
+  // Figma mockup status bar disabled — the real device already shows
+  // its own status bar (time, signal, battery), so this fake one is
+  // no longer rendered to avoid overlapping/duplicating it.
+  return null;
 }
 
 // Long-press wrapper — each instance owns its own timer (safe inside .map())
@@ -327,11 +391,10 @@ function MoneyScreen({ onBack }) {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
-  const [entries, setEntries] = useState([]);
-  const nextId = useRef(1);
+  const [entries, setEntries] = usePersistedState("moneyGoal_entries", []);
   const [toast, setToast] = useState("");
   const [confirmId, setConfirmId] = useState(null);
-  const [target, setTarget] = useState(500000);
+  const [target, setTarget] = usePersistedState("moneyGoal_target", 500000);
   const [showTargetSheet, setShowTargetSheet] = useState(false);
   const total = entries.reduce((s, e) => s + (e.kind === "withdraw" ? -e.amount : e.amount), 0);
   const progress = Math.min(100, Math.max(0, Math.round((total / target) * 100)));
@@ -340,7 +403,7 @@ function MoneyScreen({ onBack }) {
     const n = parseFloat(amount.replace(/,/g, ""));
     if (!n || n <= 0) return;
     const label = `${THAI_MONTHS[selectedMonth - 1]} ${selectedYear}`;
-    setEntries((prev) => [...prev, { id: nextId.current++, month: label, amount: n, note, kind: mode }]);
+    setEntries((prev) => [...prev, { id: makeId(), month: label, monthIdx: selectedMonth, year: selectedYear, amount: n, note, kind: mode }]);
     setAmount(""); setNote("");
     setToast(mode === "deposit" ? `+€${n.toLocaleString()} บันทึกแล้ว` : `-€${n.toLocaleString()} ถอนแล้ว`);
     setTimeout(() => setToast(""), 2500);
@@ -464,15 +527,14 @@ function AddAssetSheet({ accent, onAdd, onClose }) {
 function InvestmentScreen({ onBack }) {
   const accent = "#38BDF8";
   const [mode, setMode] = useState("deposit");
-  const [assets, setAssets] = useState([]);
+  const [assets, setAssets] = usePersistedState("investment_assets", []);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [amount, setAmount] = useState("");
-  const [entries, setEntries] = useState([]);
-  const nextId = useRef(1);
+  const [entries, setEntries] = usePersistedState("investment_entries", []);
   const [showAddAsset, setShowAddAsset] = useState(false);
   const [toast, setToast] = useState("");
   const [confirmId, setConfirmId] = useState(null);
-  const [target, setTarget] = useState(200000);
+  const [target, setTarget] = usePersistedState("investment_target", 200000);
   const [showTargetSheet, setShowTargetSheet] = useState(false);
   const total = entries.reduce((s, e) => s + (e.kind === "withdraw" ? -e.amount : e.amount), 0);
   const progress = Math.min(100, Math.max(0, Math.round((total / target) * 100)));
@@ -487,8 +549,9 @@ function InvestmentScreen({ onBack }) {
     if (!selectedAsset) return;
     const n = parseFloat(amount.replace(/,/g, ""));
     if (!n || n <= 0) return;
-    const date = `${THAI_MONTHS[new Date().getMonth()]} ${CURRENT_YEAR}`;
-    setEntries((prev) => [...prev, { id: nextId.current++, asset: selectedAsset.name, assetType: selectedAsset.type, amount: n, date, kind: mode }]);
+    const now = new Date();
+    const date = `${THAI_MONTHS[now.getMonth()]} ${now.getFullYear()}`;
+    setEntries((prev) => [...prev, { id: makeId(), asset: selectedAsset.name, assetType: selectedAsset.type, amount: n, date, year: now.getFullYear(), monthIdx: now.getMonth() + 1, kind: mode }]);
     setAmount("");
     setToast(mode === "deposit" ? `${selectedAsset.name} บันทึกแล้ว` : `ขาย/ถอน ${selectedAsset.name} แล้ว`);
     setTimeout(() => setToast(""), 2500);
@@ -625,16 +688,15 @@ function InvestmentScreen({ onBack }) {
 function ExerciseScreen({ onBack }) {
   const accent = "#A78BFA";
   const [workoutType, setWorkoutType] = useState("run");
-  const [runKm, setRunKm] = useState(""); const [runPace, setRunPace] = useState(""); const [runHr, setRunHr] = useState("");
-  const [cycleKm, setCycleKm] = useState(""); const [cyclePace, setCyclePace] = useState(""); const [cycleHr, setCycleHr] = useState("");
+  const [runKm, setRunKm] = useState(""); const [runPace, setRunPace] = useState(""); const [runHr, setRunHr] = useState(""); const [runKcal, setRunKcal] = useState("");
+  const [cycleKm, setCycleKm] = useState(""); const [cycleWatt, setCycleWatt] = useState(""); const [cycleHr, setCycleHr] = useState(""); const [cycleKcal, setCycleKcal] = useState("");
   const [muscle, setMuscle] = useState(MUSCLE_GROUPS[0]);
   const [exerciseName, setExerciseName] = useState(""); const [weightKg, setWeightKg] = useState(""); const [weightSets, setWeightSets] = useState("");
   const [toast, setToast] = useState("");
-  const [kcalGoal, setKcalGoal] = useState(2000);
+  const [kcalGoal, setKcalGoal] = usePersistedState("exercise_kcalGoal", 2000);
   const [showKcalSheet, setShowKcalSheet] = useState(false);
-  const [weekDays, setWeekDays] = useState(["rest", "rest", "rest", "rest", "rest", "rest", "rest"]);
-  const [sessions, setSessions] = useState([]);
-  const nextId = useRef(1);
+  const [weekDays, setWeekDays] = usePersistedState("exercise_weekDays", ["rest", "rest", "rest", "rest", "rest", "rest", "rest"]);
+  const [sessions, setSessions] = usePersistedState("exercise_sessions", []);
   const [confirmId, setConfirmId] = useState(null);
 
   const totalKcal = sessions.reduce((s, e) => s + e.kcal, 0);
@@ -644,22 +706,23 @@ function ExerciseScreen({ onBack }) {
   function handleSave() {
     let kcal = 0;
     let detail = "";
-    if (workoutType === "run") { kcal = Math.round((parseFloat(runKm) || 5) * 65); detail = `วิ่ง ${runKm || "?"} กม. · Pace ${runPace || "?"} · HR ${runHr || "??"}`; }
-    else if (workoutType === "cycle") { kcal = Math.round((parseFloat(cycleKm) || 20) * 25); detail = `ปั่น ${cycleKm || "?"} กม. · Pace ${cyclePace || "?"} · HR ${cycleHr || "??"}`; }
+    if (workoutType === "run") { kcal = parseInt(runKcal) || Math.round((parseFloat(runKm) || 5) * 65); detail = `วิ่ง ${runKm || "?"} กม. · Pace ${runPace || "?"} · HR ${runHr || "??"}`; }
+    else if (workoutType === "cycle") { kcal = parseInt(cycleKcal) || Math.round((parseFloat(cycleKm) || 20) * 25); detail = `ปั่น ${cycleKm || "?"} กม. · Watt ${cycleWatt || "?"} · HR ${cycleHr || "??"}`; }
     else { kcal = Math.round((parseInt(weightSets) || 4) * 40); detail = `${muscle} · ${exerciseName || "??"} · ${weightKg || "??"} กก. ${weightSets || "?"} เซ็ท`; }
 
     const today = new Date();
-    const date = `${WEEK_DAYS[today.getDay() === 0 ? 6 : today.getDay() - 1]}. ก.ย.`;
-    const newSession = { id: nextId.current++, day: today.getDay(), type: workoutType, kcal, detail, date };
+    const dayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
+    const date = `${WEEK_DAYS[dayIdx]}. ${THAI_MONTHS[today.getMonth()]}`;
+    const newSession = { id: makeId(), day: today.getDay(), type: workoutType, kcal, detail, date, dateISO: today.toISOString(), year: today.getFullYear(), monthIdx: today.getMonth() + 1 };
     setSessions((prev) => [...prev, newSession]);
 
-    const dayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
-    setWeekDays((prev) => { const next = [...prev]; next[dayIdx] = workoutType; return next; });
+    const dayIdx2 = dayIdx;
+    setWeekDays((prev) => { const next = [...prev]; next[dayIdx2] = workoutType; return next; });
 
     setToast(`บันทึกแล้ว +${kcal} Kcal`);
     setTimeout(() => setToast(""), 2500);
-    setRunKm(""); setRunPace(""); setRunHr("");
-    setCycleKm(""); setCyclePace(""); setCycleHr("");
+    setRunKm(""); setRunPace(""); setRunHr(""); setRunKcal("");
+    setCycleKm(""); setCycleWatt(""); setCycleHr(""); setCycleKcal("");
     setExerciseName(""); setWeightKg(""); setWeightSets("");
   }
 
@@ -767,9 +830,9 @@ function ExerciseScreen({ onBack }) {
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 5.2" value={runKm} onChange={(e) => setRunKm(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Pace (นาที/กม.)</label><input type="text" placeholder="เช่น 6:30" value={runPace} onChange={(e) => setRunPace(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ marginBottom: "12px" }}>
-              <label style={S.label}>Heart Rate เฉลี่ย (bpm)</label>
-              <input type="number" placeholder="เช่น 152" value={runHr} onChange={(e) => setRunHr(e.target.value)} style={S.input} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
+              <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 152" value={runHr} onChange={(e) => setRunHr(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={runKcal} onChange={(e) => setRunKcal(e.target.value)} style={S.input} /></div>
             </div>
             <SubmitButton label="บันทึก" accent={accent} onClick={handleSave} />
           </div>
@@ -784,11 +847,11 @@ function ExerciseScreen({ onBack }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 30" value={cycleKm} onChange={(e) => setCycleKm(e.target.value)} style={S.input} /></div>
-              <div><label style={S.label}>Pace (นาที/กม.)</label><input type="text" placeholder="เช่น 3:20" value={cyclePace} onChange={(e) => setCyclePace(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Watt</label><input type="number" placeholder="เช่น 180" value={cycleWatt} onChange={(e) => setCycleWatt(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ marginBottom: "12px" }}>
-              <label style={S.label}>Heart Rate เฉลี่ย (bpm)</label>
-              <input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px", alignItems: "end" }}>
+              <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={cycleKcal} onChange={(e) => setCycleKcal(e.target.value)} style={S.input} /></div>
             </div>
             <SubmitButton label="บันทึก" accent={accent} onClick={handleSave} />
           </div>
@@ -861,12 +924,7 @@ function ExerciseScreen({ onBack }) {
 
 // ─── Stats Screen ─────────────────────────────────────────────────────────────
 
-const MONEY_MONTHLY = [];
-const MONEY_YEARLY = [];
-const INVEST_ENTRIES_STATS = [];
-const EX_WEEKLY = [];
-const EX_MONTHLY = [];
-const EX_YEARLY = [];
+// (Stats chart data is now computed live inside StatsScreen from persisted entries.)
 
 function StatCard({ label, value, sub, accent }) {
   return (
@@ -882,6 +940,69 @@ function StatsScreen({ onBack }) {
   const [tab, setTab] = useState("money");
   const [exRange, setExRange] = useState("month");
 
+  const [moneyEntries] = usePersistedState("moneyGoal_entries", []);
+  const [moneyTarget] = usePersistedState("moneyGoal_target", 500000);
+  const [investEntries] = usePersistedState("investment_entries", []);
+  const [exSessions] = usePersistedState("exercise_sessions", []);
+
+  // ── Money: aggregate real entries by month label and by year ──
+  const moneyByMonth = {};
+  moneyEntries.forEach((e) => {
+    const net = e.kind === "withdraw" ? -e.amount : e.amount;
+    moneyByMonth[e.month] = (moneyByMonth[e.month] || 0) + net;
+  });
+  const MONEY_MONTHLY = Object.entries(moneyByMonth).map(([month, amount]) => ({ month, amount }));
+
+  const moneyByYear = {};
+  moneyEntries.forEach((e) => {
+    const net = e.kind === "withdraw" ? -e.amount : e.amount;
+    const y = e.year || CURRENT_YEAR;
+    moneyByYear[y] = (moneyByYear[y] || 0) + net;
+  });
+  const MONEY_YEARLY = Object.entries(moneyByYear).map(([year, amount]) => ({ year: Number(year), amount })).sort((a, b) => a.year - b.year);
+
+  // ── Investment: aggregate real entries by asset ──
+  const investByAsset = {};
+  investEntries.forEach((e) => {
+    const net = e.kind === "withdraw" ? -e.amount : e.amount;
+    if (!investByAsset[e.asset]) investByAsset[e.asset] = { asset: e.asset, type: e.assetType, amount: 0 };
+    investByAsset[e.asset].amount += net;
+  });
+  const INVEST_ENTRIES_STATS = Object.values(investByAsset).filter((a) => a.amount > 0);
+
+  // ── Exercise: aggregate real sessions by week / month / year ──
+  const exByWeek = {};
+  exSessions.forEach((s) => {
+    const key = s.dateISO ? weekKey(s.dateISO) : "?";
+    exByWeek[key] = (exByWeek[key] || 0) + s.kcal;
+  });
+  const EX_WEEKLY = Object.entries(exByWeek).sort(([a], [b]) => a.localeCompare(b)).slice(-8).map(([week, kcal]) => ({ week, kcal }));
+
+  const exByMonth = {};
+  exSessions.forEach((s) => {
+    const label = s.dateISO ? THAI_MONTHS[new Date(s.dateISO).getMonth()] : (s.date || "-");
+    exByMonth[label] = (exByMonth[label] || 0) + s.kcal;
+  });
+  const EX_MONTHLY = Object.entries(exByMonth).map(([month, kcal]) => ({ month, kcal }));
+
+  const exByYear = {};
+  exSessions.forEach((s) => {
+    const y = s.year || (s.dateISO ? new Date(s.dateISO).getFullYear() : CURRENT_YEAR);
+    exByYear[y] = (exByYear[y] || 0) + s.kcal;
+  });
+  const EX_YEARLY = Object.entries(exByYear).map(([year, kcal]) => ({ year: Number(year), kcal })).sort((a, b) => a.year - b.year);
+
+  const exTypeCfg = [
+    { key: "run", label: "วิ่ง 🏃", col: "#A78BFA" },
+    { key: "cycle", label: "ปั่นจักรยาน 🚴", col: "#818CF8" },
+    { key: "weights", label: "ยกเวท 🏋️", col: "#34D399" },
+  ];
+  const EX_TYPE_BREAKDOWN = exTypeCfg.map((t) => {
+    const days = exSessions.filter((s) => s.type === t.key).length;
+    const pct = exSessions.length ? Math.round((days / exSessions.length) * 100) : 0;
+    return { ...t, days, pct };
+  });
+
   const hasMoneyData = MONEY_MONTHLY.length > 0 && MONEY_YEARLY.length > 0;
   const hasInvestData = INVEST_ENTRIES_STATS.length > 0;
   const hasExData = EX_WEEKLY.length > 0 && EX_MONTHLY.length > 0 && EX_YEARLY.length > 0;
@@ -892,6 +1013,7 @@ function StatsScreen({ onBack }) {
   const moneyTotal = MONEY_MONTHLY.reduce((s, e) => s + e.amount, 0);
   const moneyAvg = MONEY_MONTHLY.length ? Math.round(moneyTotal / MONEY_MONTHLY.length) : 0;
   const bestMoneyYear = hasMoneyData ? MONEY_YEARLY.reduce((a, b) => (b.amount > a.amount ? b : a)) : null;
+  const bestMoneyMonth = MONEY_MONTHLY.length ? MONEY_MONTHLY.reduce((a, b) => (b.amount > a.amount ? b : a)) : null;
 
   const tabs = [
     { key: "money", label: "Money", accent: "#2DD4BF" },
@@ -923,12 +1045,12 @@ function StatsScreen({ onBack }) {
           ) : (
           <>
             <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-              <StatCard label="ออมรวม" value={`€${moneyTotal.toLocaleString()}`} sub="จาก 3 เดือน" accent="#2DD4BF" />
+              <StatCard label="ออมรวม" value={`€${moneyTotal.toLocaleString()}`} sub={`จาก ${MONEY_MONTHLY.length} เดือน`} accent="#2DD4BF" />
               <StatCard label="เฉลี่ย/เดือน" value={`€${moneyAvg.toLocaleString()}`} sub="avg" accent="#2DD4BF" />
             </div>
             <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-              <StatCard label="เดือนที่ดีที่สุด" value="ส.ค." sub="€15,000" accent="#2DD4BF" />
-              <StatCard label="เหลืออีก" value={`€${(500000 - moneyTotal).toLocaleString()}`} sub="สู่เป้าหมาย" accent="rgba(255,255,255,0.5)" />
+              <StatCard label="เดือนที่ดีที่สุด" value={bestMoneyMonth ? bestMoneyMonth.month : "-"} sub={bestMoneyMonth ? `€${bestMoneyMonth.amount.toLocaleString()}` : ""} accent="#2DD4BF" />
+              <StatCard label="เหลืออีก" value={`€${Math.max(0, moneyTarget - moneyTotal).toLocaleString()}`} sub="สู่เป้าหมาย" accent="rgba(255,255,255,0.5)" />
             </div>
             <div style={{ ...S.section, padding: "20px" }}>
               <div style={S.label}>ยอดออมรายเดือน</div>
@@ -944,12 +1066,16 @@ function StatsScreen({ onBack }) {
             </div>
             <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
               <StatCard label="ปีที่ออมมากสุด" value={String(bestMoneyYear.year)} sub={`€${bestMoneyYear.amount.toLocaleString()}`} accent="#2DD4BF" />
-              <StatCard
-                label="เติบโตจากปีก่อน"
-                value={`${MONEY_YEARLY[MONEY_YEARLY.length - 1].amount >= MONEY_YEARLY[MONEY_YEARLY.length - 2].amount ? "+" : ""}${Math.round(((MONEY_YEARLY[MONEY_YEARLY.length - 1].amount - MONEY_YEARLY[MONEY_YEARLY.length - 2].amount) / MONEY_YEARLY[MONEY_YEARLY.length - 2].amount) * 100)}%`}
-                sub={`${MONEY_YEARLY[MONEY_YEARLY.length - 2].year} → ${MONEY_YEARLY[MONEY_YEARLY.length - 1].year}`}
-                accent="#2DD4BF"
-              />
+              {MONEY_YEARLY.length >= 2 ? (
+                <StatCard
+                  label="เติบโตจากปีก่อน"
+                  value={`${MONEY_YEARLY[MONEY_YEARLY.length - 1].amount >= MONEY_YEARLY[MONEY_YEARLY.length - 2].amount ? "+" : ""}${Math.round(((MONEY_YEARLY[MONEY_YEARLY.length - 1].amount - MONEY_YEARLY[MONEY_YEARLY.length - 2].amount) / MONEY_YEARLY[MONEY_YEARLY.length - 2].amount) * 100)}%`}
+                  sub={`${MONEY_YEARLY[MONEY_YEARLY.length - 2].year} → ${MONEY_YEARLY[MONEY_YEARLY.length - 1].year}`}
+                  accent="#2DD4BF"
+                />
+              ) : (
+                <StatCard label="เติบโตจากปีก่อน" value="-" sub="ต้องมีข้อมูล 2 ปีขึ้นไป" accent="rgba(255,255,255,0.4)" />
+              )}
             </div>
             <div style={S.section}>
               <div style={S.label}>ภาพรวมรายปี</div>
@@ -1059,14 +1185,10 @@ function StatsScreen({ onBack }) {
             {/* Workout type breakdown */}
             <div style={S.section}>
               <div style={S.label}>ประเภทการออกกำลังกาย</div>
-              {[
-                { type: "วิ่ง 🏃", days: 14, pct: 58, col: "#A78BFA" },
-                { type: "ปั่นจักรยาน 🚴", days: 6, pct: 25, col: "#818CF8" },
-                { type: "ยกเวท 🏋️", days: 4, pct: 17, col: "#34D399" },
-              ].map((r, i) => (
-                <div key={i} style={{ marginBottom: i < 2 ? "14px" : 0 }}>
+              {EX_TYPE_BREAKDOWN.map((r, i) => (
+                <div key={r.key} style={{ marginBottom: i < EX_TYPE_BREAKDOWN.length - 1 ? "14px" : 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
-                    <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.7)" }}>{r.type}</span>
+                    <span style={{ fontSize: "13px", color: "rgba(255,255,255,0.7)" }}>{r.label}</span>
                     <span style={{ fontSize: "13px", fontWeight: 600, color: r.col }}>{r.days} ครั้ง · {r.pct}%</span>
                   </div>
                   <div style={{ height: "5px", borderRadius: "3px", background: "rgba(255,255,255,0.08)" }}>
@@ -1105,20 +1227,16 @@ function StatsScreen({ onBack }) {
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
 
-const goals = [
-  { id: 1, label: "Money Goal", sublabel: "Annual savings target", accentColor: "#2DD4BF", progress: 0, target: "€500,000", current: "€0", icon: <MoneyIcon />, tag: "Finance", screen: "money" },
-  { id: 2, label: "Investment", sublabel: "Portfolio growth", accentColor: "#38BDF8", progress: 0, target: "€200,000", current: "€0", icon: <InvestIcon />, tag: "Wealth", screen: "investment" },
-  { id: 3, label: "Exercise", sublabel: "Weekly workout streak", accentColor: "#A78BFA", progress: 0, target: "52 weeks", current: "0 weeks", icon: <ExerciseIcon />, tag: "Health", screen: "exercise" },
-];
+// (goal card data is now computed live inside HomeScreen from persisted entries.)
 
 function GoalCardItem({ goal, onClick }) {
   return (
-    <button onClick={onClick} className="w-full text-left rounded-2xl relative flex flex-col" style={{ background: cardGradient(goal.accentColor), backdropFilter: "blur(20px)", color: "#fff", minHeight: "160px", padding: "20px", border: `1px solid ${goal.accentColor}30`, cursor: "pointer", transition: "transform 0.15s ease" }}
+    <button onClick={onClick} style={{ width: "100%", textAlign: "left", borderRadius: "16px", position: "relative", display: "flex", flexDirection: "column", background: cardGradient(goal.accentColor), backdropFilter: "blur(20px)", color: "#fff", minHeight: "160px", padding: "20px", border: `1px solid ${goal.accentColor}30`, cursor: "pointer", transition: "transform 0.15s ease" }}
       onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
       onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
       onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
     >
-      <div className="flex items-start justify-between mb-auto">
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "auto", width: "100%" }}>
         <div>
           <span style={{ color: goal.accentColor, fontSize: "11px", fontWeight: 500, letterSpacing: "0.1em", textTransform: "uppercase" }}>{goal.tag}</span>
           <h2 style={{ fontFamily: FONT, fontWeight: 700, fontSize: "20px", marginTop: "2px", lineHeight: 1.1, letterSpacing: "-0.01em" }}>{goal.label}</h2>
@@ -1126,11 +1244,11 @@ function GoalCardItem({ goal, onClick }) {
         </div>
         <div style={{ color: goal.accentColor, opacity: 0.9, flexShrink: 0 }}>{goal.icon}</div>
       </div>
-      <div style={{ marginTop: "20px" }}>
+      <div style={{ marginTop: "20px", width: "100%" }}>
         <div style={{ height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", marginBottom: "8px" }}>
           <div style={{ height: "100%", width: `${goal.progress}%`, borderRadius: "2px", background: goal.accentColor }} />
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", width: "100%" }}>
           <span style={{ opacity: 0.5, fontSize: "11px" }}>{goal.current} of {goal.target}</span>
           <span style={{ color: goal.accentColor, fontSize: "14px", fontWeight: 700 }}>{goal.progress}%</span>
         </div>
@@ -1171,6 +1289,28 @@ function BottomNav({ active, onNavigate }) {
 }
 
 function HomeScreen({ onNavigate }) {
+  const [moneyEntries] = usePersistedState("moneyGoal_entries", []);
+  const [moneyTarget] = usePersistedState("moneyGoal_target", 500000);
+  const [investEntries] = usePersistedState("investment_entries", []);
+  const [investTarget] = usePersistedState("investment_target", 200000);
+  const [exSessions] = usePersistedState("exercise_sessions", []);
+
+  const moneyTotal = moneyEntries.reduce((s, e) => s + (e.kind === "withdraw" ? -e.amount : e.amount), 0);
+  const moneyProgress = Math.min(100, Math.max(0, Math.round((moneyTotal / moneyTarget) * 100)));
+
+  const investTotal = investEntries.reduce((s, e) => s + (e.kind === "withdraw" ? -e.amount : e.amount), 0);
+  const investProgress = Math.min(100, Math.max(0, Math.round((investTotal / investTarget) * 100)));
+
+  const activeWeeks = new Set(exSessions.filter((s) => s.dateISO).map((s) => weekKey(s.dateISO))).size;
+  const exProgress = Math.min(100, Math.round((activeWeeks / 52) * 100));
+
+  const goals = [
+    { id: 1, label: "Money Goal", sublabel: "Annual savings target", accentColor: "#2DD4BF", progress: moneyProgress, target: `€${moneyTarget.toLocaleString()}`, current: `€${moneyTotal.toLocaleString()}`, icon: <MoneyIcon />, tag: "Finance", screen: "money" },
+    { id: 2, label: "Investment", sublabel: "Portfolio growth", accentColor: "#38BDF8", progress: investProgress, target: `€${investTarget.toLocaleString()}`, current: `€${investTotal.toLocaleString()}`, icon: <InvestIcon />, tag: "Wealth", screen: "investment" },
+    { id: 3, label: "Exercise", sublabel: "Weekly workout streak", accentColor: "#A78BFA", progress: exProgress, target: "52 weeks", current: `${activeWeeks} weeks`, icon: <ExerciseIcon />, tag: "Health", screen: "exercise" },
+  ];
+  const avgProgress = Math.round((moneyProgress + investProgress + exProgress) / 3);
+
   return (
     <div style={{ minHeight: "100%", background: HOME_BG, color: "#fff", fontFamily: FONT, maxWidth: "430px", margin: "0 auto", display: "flex", flexDirection: "column" }}>
       <StatusBar />
@@ -1179,8 +1319,8 @@ function HomeScreen({ onNavigate }) {
         <h1 style={{ fontFamily: FONT, fontSize: "32px", fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.1, color: "#fff" }}>My Goals</h1>
       </div>
       <div style={{ padding: "16px 24px", display: "flex", gap: "8px" }}>
-        {[{ label: "Active", value: "3" }, { label: "Avg. Progress", value: "0%" }, { label: "This Month", value: "0%" }].map((s) => (
-          <div key={s.label} style={{ flex: 1, background: "rgba(255,255,255,0.05)", backdropFilter: "blur(14px)", borderRadius: "12px", padding: "10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
+        {[{ label: "Active", value: String(goals.length) }, { label: "Avg. Progress", value: `${avgProgress}%` }, { label: "This Month", value: `${avgProgress}%` }].map((s) => (
+          <div key={s.label} style={{ flex: 1, minWidth: 0, background: "rgba(255,255,255,0.05)", backdropFilter: "blur(14px)", borderRadius: "12px", padding: "10px", textAlign: "center", border: "1px solid rgba(255,255,255,0.06)" }}>
             <div style={{ fontSize: "16px", fontWeight: 700 }}>{s.value}</div>
             <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "2px", letterSpacing: "0.06em", textTransform: "uppercase" }}>{s.label}</div>
           </div>
@@ -1195,13 +1335,82 @@ function HomeScreen({ onNavigate }) {
   );
 }
 
+// ─── Login ────────────────────────────────────────────────────────────────────
+// Simple email/password gate. Create the one user you'll sign in with
+// under Firebase Console → Authentication → Users → Add user.
+
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleLogin() {
+    if (!email.trim() || !password) return;
+    setError("");
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (e) {
+      setError("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: HOME_BG, color: "#fff", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <div style={{ width: "100%", maxWidth: "360px" }}>
+        <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "24px", textAlign: "center" }}>เข้าสู่ระบบ</h1>
+        <div style={{ marginBottom: "12px" }}>
+          <label style={S.label}>อีเมล</label>
+          <input type="email" autoCapitalize="none" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} style={S.input} />
+        </div>
+        <div style={{ marginBottom: "12px" }}>
+          <label style={S.label}>รหัสผ่าน</label>
+          <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleLogin()} style={S.input} />
+        </div>
+        {error && <div style={{ color: "#FB7185", fontSize: "13px", marginBottom: "8px" }}>{error}</div>}
+        <SubmitButton label={busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"} accent={NAV_BLUE} onClick={handleLogin} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
-export default function App() {
+function AppContent() {
   const [screen, setScreen] = useState("home");
   if (screen === "money") return <MoneyScreen onBack={() => setScreen("home")} />;
   if (screen === "investment") return <InvestmentScreen onBack={() => setScreen("home")} />;
   if (screen === "exercise") return <ExerciseScreen onBack={() => setScreen("home")} />;
   if (screen === "stats") return <StatsScreen onBack={() => setScreen("home")} />;
   return <HomeScreen onNavigate={setScreen} />;
+}
+
+export default function App() {
+  const [authState, setAuthState] = useState({ loading: true, uid: null });
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthState({ loading: false, uid: user ? user.uid : null });
+    });
+    return () => unsub();
+  }, []);
+
+  if (authState.loading) {
+    // Brief splash while Firebase checks for an existing session — avoids
+    // a flash of the login screen on every reload.
+    return <div style={{ minHeight: "100vh", background: HOME_BG }} />;
+  }
+
+  if (!authState.uid) {
+    return <LoginScreen />;
+  }
+
+  return (
+    <AuthContext.Provider value={{ uid: authState.uid }}>
+      <AppContent />
+    </AuthContext.Provider>
+  );
 }
