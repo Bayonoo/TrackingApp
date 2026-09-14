@@ -648,8 +648,8 @@ function InvestmentScreen({ onBack }) {
 function ExerciseScreen({ onBack }) {
   const accent = "#A78BFA";
   const [workoutType, setWorkoutType] = useState("run");
-  const [runKm, setRunKm] = useState(""); const [runPace, setRunPace] = useState(""); const [runHr, setRunHr] = useState("");
-  const [cycleKm, setCycleKm] = useState(""); const [cyclePace, setCyclePace] = useState(""); const [cycleHr, setCycleHr] = useState("");
+  const [runKm, setRunKm] = useState(""); const [runPace, setRunPace] = useState(""); const [runHr, setRunHr] = useState(""); const [runKcal, setRunKcal] = useState("");
+  const [cycleKm, setCycleKm] = useState(""); const [cycleWatt, setCycleWatt] = useState(""); const [cycleHr, setCycleHr] = useState(""); const [cycleKcal, setCycleKcal] = useState("");
   const [muscle, setMuscle] = useState(MUSCLE_GROUPS[0]);
   const [exerciseName, setExerciseName] = useState(""); const [weightKg, setWeightKg] = useState(""); const [weightSets, setWeightSets] = useState("");
   const [toast, setToast] = useState("");
@@ -666,8 +666,8 @@ function ExerciseScreen({ onBack }) {
   function handleSave() {
     let kcal = 0;
     let detail = "";
-    if (workoutType === "run") { kcal = Math.round((parseFloat(runKm) || 5) * 65); detail = `วิ่ง ${runKm || "?"} กม. · Pace ${runPace || "?"} · HR ${runHr || "??"}`; }
-    else if (workoutType === "cycle") { kcal = Math.round((parseFloat(cycleKm) || 20) * 25); detail = `ปั่น ${cycleKm || "?"} กม. · Pace ${cyclePace || "?"} · HR ${cycleHr || "??"}`; }
+    if (workoutType === "run") { kcal = parseInt(runKcal) || Math.round((parseFloat(runKm) || 5) * 65); detail = `วิ่ง ${runKm || "?"} กม. · Pace ${runPace || "?"} · HR ${runHr || "??"}`; }
+    else if (workoutType === "cycle") { kcal = parseInt(cycleKcal) || Math.round((parseFloat(cycleKm) || 20) * 25); detail = `ปั่น ${cycleKm || "?"} กม. · Watt ${cycleWatt || "?"} · HR ${cycleHr || "??"}`; }
     else { kcal = Math.round((parseInt(weightSets) || 4) * 40); detail = `${muscle} · ${exerciseName || "??"} · ${weightKg || "??"} กก. ${weightSets || "?"} เซ็ท`; }
 
     const today = new Date();
@@ -681,8 +681,8 @@ function ExerciseScreen({ onBack }) {
 
     setToast(`บันทึกแล้ว +${kcal} Kcal`);
     setTimeout(() => setToast(""), 2500);
-    setRunKm(""); setRunPace(""); setRunHr("");
-    setCycleKm(""); setCyclePace(""); setCycleHr("");
+    setRunKm(""); setRunPace(""); setRunHr(""); setRunKcal("");
+    setCycleKm(""); setCycleWatt(""); setCycleHr(""); setCycleKcal("");
     setExerciseName(""); setWeightKg(""); setWeightSets("");
   }
 
@@ -790,9 +790,9 @@ function ExerciseScreen({ onBack }) {
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 5.2" value={runKm} onChange={(e) => setRunKm(e.target.value)} style={S.input} /></div>
               <div><label style={S.label}>Pace (นาที/กม.)</label><input type="text" placeholder="เช่น 6:30" value={runPace} onChange={(e) => setRunPace(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ marginBottom: "12px" }}>
-              <label style={S.label}>Heart Rate เฉลี่ย (bpm)</label>
-              <input type="number" placeholder="เช่น 152" value={runHr} onChange={(e) => setRunHr(e.target.value)} style={S.input} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+              <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 152" value={runHr} onChange={(e) => setRunHr(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={runKcal} onChange={(e) => setRunKcal(e.target.value)} style={S.input} /></div>
             </div>
             <SubmitButton label="บันทึก" accent={accent} onClick={handleSave} />
           </div>
@@ -807,14 +807,12 @@ function ExerciseScreen({ onBack }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "10px" }}>
               <div><label style={S.label}>ระยะทาง (กม.)</label><input type="number" placeholder="เช่น 30" value={cycleKm} onChange={(e) => setCycleKm(e.target.value)} style={S.input} /></div>
-              <div><label style={S.label}>Pace (นาที/กม.)</label><input type="text" placeholder="เช่น 3:20" value={cyclePace} onChange={(e) => setCyclePace(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Watt</label><input type="number" placeholder="เช่น 180" value={cycleWatt} onChange={(e) => setCycleWatt(e.target.value)} style={S.input} /></div>
             </div>
-            <div style={{ marginBottom: "12px" }}>
-              <label style={S.label}>Heart Rate เฉลี่ย (bpm)</label>
-              <input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
+              <div><label style={S.label}>Heart Rate เฉลี่ย (bpm)</label><input type="number" placeholder="เช่น 138" value={cycleHr} onChange={(e) => setCycleHr(e.target.value)} style={S.input} /></div>
+              <div><label style={S.label}>Kcal (ใส่เอง)</label><input type="number" placeholder="เว้นว่าง = คำนวณอัตโนมัติ" value={cycleKcal} onChange={(e) => setCycleKcal(e.target.value)} style={S.input} /></div>
             </div>
-            <SubmitButton label="บันทึก" accent={accent} onClick={handleSave} />
-          </div>
         )}
 
         {/* Weights */}
