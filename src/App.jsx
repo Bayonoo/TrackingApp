@@ -1,5 +1,17 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useContext, createContext } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { auth, db } from "./firebase";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+
+// ─── Auth context ───────────────────────────────────────────────────────────
+// Gives usePersistedState access to the current user's uid so it knows
+// which Firestore path to read/write, without threading a prop through
+// every screen component.
+const AuthContext = createContext(null);
+function useAuth() {
+  return useContext(AuthContext);
+}
 
 // ─── Font & Theme ─────────────────────────────────────────────────────────────
 
@@ -39,10 +51,14 @@ const INVEST_TYPES = [
 const MUSCLE_GROUPS = ["อก", "หลัง", "ไหล่", "แขน", "ขา", "แกน"];
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
-// Saves state to the browser's localStorage so data survives navigating
-// away (Back), closing the tab, or reloading the page.
+// Saves state to the browser's localStorage AND to Firestore (under
+// users/{uid}/appState/{key}) so data survives navigating away (Back),
+// closing the tab, reloading the page, reinstalling the PWA, or Safari
+// clearing site data after inactivity. localStorage still gives an
+// instant first paint; Firestore is the durable copy.
 
 function usePersistedState(key, initialValue) {
+  const { uid } = useAuth() || {};
   const [state, setState] = useState(() => {
     try {
       const stored = window.localStorage.getItem(key);
@@ -51,13 +67,37 @@ function usePersistedState(key, initialValue) {
       return initialValue;
     }
   });
+
+  // Live-subscribe to the cloud copy once we know who's signed in, so
+  // every screen using the same key stays in sync and a fresh device
+  // picks up existing data.
+  useEffect(() => {
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "appState", key);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) setState(snap.data().value);
+      },
+      (err) => console.error(`Firestore read failed for "${key}":`, err)
+    );
+    return () => unsub();
+  }, [uid, key]);
+
+  // Persist every change locally (instant) and to Firestore (durable).
   useEffect(() => {
     try {
       window.localStorage.setItem(key, JSON.stringify(state));
     } catch {
       // storage unavailable (private mode / quota) — fail silently
     }
-  }, [key, state]);
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "appState", key);
+    setDoc(ref, { value: state, updatedAt: Date.now() }).catch((err) =>
+      console.error(`Firestore write failed for "${key}":`, err)
+    );
+  }, [key, state, uid]);
+
   return [state, setState];
 }
 
@@ -1295,13 +1335,82 @@ function HomeScreen({ onNavigate }) {
   );
 }
 
+// ─── Login ────────────────────────────────────────────────────────────────────
+// Simple email/password gate. Create the one user you'll sign in with
+// under Firebase Console → Authentication → Users → Add user.
+
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleLogin() {
+    if (!email.trim() || !password) return;
+    setError("");
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (e) {
+      setError("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: HOME_BG, color: "#fff", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <div style={{ width: "100%", maxWidth: "360px" }}>
+        <h1 style={{ fontSize: "24px", fontWeight: 700, marginBottom: "24px", textAlign: "center" }}>เข้าสู่ระบบ</h1>
+        <div style={{ marginBottom: "12px" }}>
+          <label style={S.label}>อีเมล</label>
+          <input type="email" autoCapitalize="none" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} style={S.input} />
+        </div>
+        <div style={{ marginBottom: "12px" }}>
+          <label style={S.label}>รหัสผ่าน</label>
+          <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleLogin()} style={S.input} />
+        </div>
+        {error && <div style={{ color: "#FB7185", fontSize: "13px", marginBottom: "8px" }}>{error}</div>}
+        <SubmitButton label={busy ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"} accent={NAV_BLUE} onClick={handleLogin} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
-export default function App() {
+function AppContent() {
   const [screen, setScreen] = useState("home");
   if (screen === "money") return <MoneyScreen onBack={() => setScreen("home")} />;
   if (screen === "investment") return <InvestmentScreen onBack={() => setScreen("home")} />;
   if (screen === "exercise") return <ExerciseScreen onBack={() => setScreen("home")} />;
   if (screen === "stats") return <StatsScreen onBack={() => setScreen("home")} />;
   return <HomeScreen onNavigate={setScreen} />;
+}
+
+export default function App() {
+  const [authState, setAuthState] = useState({ loading: true, uid: null });
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthState({ loading: false, uid: user ? user.uid : null });
+    });
+    return () => unsub();
+  }, []);
+
+  if (authState.loading) {
+    // Brief splash while Firebase checks for an existing session — avoids
+    // a flash of the login screen on every reload.
+    return <div style={{ minHeight: "100vh", background: HOME_BG }} />;
+  }
+
+  if (!authState.uid) {
+    return <LoginScreen />;
+  }
+
+  return (
+    <AuthContext.Provider value={{ uid: authState.uid }}>
+      <AppContent />
+    </AuthContext.Provider>
+  );
 }
