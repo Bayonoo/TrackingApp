@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useContext, createContext } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { auth, db } from "./firebase";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, getDocFromServer } from "firebase/firestore";
 
 // ─── Auth context ───────────────────────────────────────────────────────────
 // Gives usePersistedState access to the current user's uid so it knows
@@ -81,7 +81,29 @@ function usePersistedState(key, initialValue) {
       },
       (err) => console.error(`Firestore read failed for "${key}":`, err)
     );
-    return () => unsub();
+
+    // iOS Safari suspends a home-screen web app's network/JS activity while
+    // it's in the background, so the realtime listener above can come back
+    // stale (or silently dead) when the app is reopened — it used to take a
+    // manual edit to "wake" it. Force a fresh server read whenever the app
+    // becomes visible/focused again so reopening alone is enough to sync.
+    function refreshFromServer() {
+      if (document.visibilityState !== "visible") return;
+      getDocFromServer(ref)
+        .then((snap) => {
+          if (snap.exists()) setState(snap.data().value);
+        })
+        .catch((err) => console.error(`Firestore refresh failed for "${key}":`, err));
+    }
+    document.addEventListener("visibilitychange", refreshFromServer);
+    window.addEventListener("focus", refreshFromServer);
+    refreshFromServer(); // also catch the case where this mount IS the reopen
+
+    return () => {
+      unsub();
+      document.removeEventListener("visibilitychange", refreshFromServer);
+      window.removeEventListener("focus", refreshFromServer);
+    };
   }, [uid, key]);
 
   // Persist every change locally (instant) and to Firestore (durable).
